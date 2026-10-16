@@ -1253,5 +1253,8 @@ export function generateMasterLandingHtml(): string {
 </html>`;
 }
 
-/** Curated purchasable templates (billing / checkout allowlist). */
-export const STOREFRONT_TEMPLATES = TEMPLATES;
+/**
+ * Canonical sellable storefront list: all HTML templates (HTML_STOREFRONT_TEMPLATES).
+ * Purchase/checkout allowlist must stay aligned with this export (not the hand-crafted TEMPLATES demo set).
+ */
+export const STOREFRONT_TEMPLATES = HTML_STOREFRONT_TEMPLATES;
