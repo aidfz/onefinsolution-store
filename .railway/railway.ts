@@ -8,7 +8,7 @@ const onefinWeb = service({
   name: "onefin-web",
   source: {
     type: "github",
-    repo: "thugnationnet/onefinsolution-store",
+    repo: "aidfz/onefinsolution-store",
     branch: "main",
   },
   networking: {

@@ -8,7 +8,7 @@ Controlled move of domain and service accounts. Application behavior, schema, pr
 | --- | --- |
 | Domain | `onefinsolution.net` (apex + `www`) |
 | App paths | Existing paths only (`/`, `/dashboard/billing`, `/workspace`, `/software`, …) |
-| GitHub | `thugnationnet/onefinsolution-store` |
+| GitHub | `aidfz/onefinsolution-store` |
 | Hosting | Railway (new project/account — configure after cleanup) |
 | Payments | One shared Stripe account (new) + one webhook endpoint |
 | Email | Resend (new account) — from-addresses on `onefinsolution.net` |
@@ -43,7 +43,7 @@ Configure in Railway variables and local `.env.local` only:
 5. Copy emitted Price/Product IDs into Railway env (`STRIPE_PRICE_*`, catalogs).
 6. Create Stripe webhook → `https://onefinsolution.net/api/stripe/webhook`; set `STRIPE_WEBHOOK_SECRET`.
 7. Connect Resend + domain DNS; set `RESEND_API_KEY` / from addresses.
-8. Deploy from `thugnationnet/onefinsolution-store` `main`.
+8. Deploy from `aidfz/onefinsolution-store` `main`.
 9. Smoke-test: health, signup/login email, subscription checkout, credits, software checkout, webhook ledger.
 
 ## Local laptop notes
