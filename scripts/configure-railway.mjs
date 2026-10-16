@@ -49,8 +49,8 @@ const NEVER_PUSH = new Set([
 const DESIRED = [
   { key: 'NODE_ENV', literal: 'production' },
   { key: 'BILLING_PROVIDER', literal: 'stripe' },
-  { key: 'NEXT_PUBLIC_SITE_URL', fallback: 'https://onefinsolution.net' },
-  { key: 'SESSION_COOKIE_DOMAIN', fallback: 'onefinsolution.net' },
+  { key: 'NEXT_PUBLIC_SITE_URL', fallback: 'https://onefinsolution.store' },
+  { key: 'SESSION_COOKIE_DOMAIN', fallback: 'onefinsolution.store' },
   { key: 'SESSION_SECRET', required: true },
   { key: 'WORKSPACE_SIGNING_KEY', required: true },
   { key: 'WORKSPACE_CREDIT_COST' },

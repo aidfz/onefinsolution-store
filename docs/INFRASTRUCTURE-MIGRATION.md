@@ -1,4 +1,4 @@
-# Infrastructure migration — onefinsolution.net
+# Infrastructure migration — onefinsolution.store
 
 Controlled move of domain and service accounts. Application behavior, schema, pricing logic, and UX stay the same.
 
@@ -6,12 +6,12 @@ Controlled move of domain and service accounts. Application behavior, schema, pr
 
 | Item | Value |
 | --- | --- |
-| Domain | `onefinsolution.net` (apex + `www`) |
+| Domain | `onefinsolution.store` (apex + `www`) |
 | App paths | Existing paths only (`/`, `/dashboard/billing`, `/workspace`, `/software`, …) |
 | GitHub | `aidfz/onefinsolution-store` |
 | Hosting | Railway (new project/account — configure after cleanup) |
 | Payments | One shared Stripe account (new) + one webhook endpoint |
-| Email | Resend (new account) — from-addresses on `onefinsolution.net` |
+| Email | Resend (new account) — from-addresses on `onefinsolution.store` |
 
 ## Architecture (unchanged)
 
@@ -37,11 +37,11 @@ Configure in Railway variables and local `.env.local` only:
 ## Provisioning order (new accounts)
 
 1. Create Railway project + Postgres; set `DATABASE_URL` and session secrets.
-2. Point custom domain `onefinsolution.net` at Railway.
+2. Point custom domain `onefinsolution.store` at Railway.
 3. Connect new Stripe account; set secret/publishable keys + `STRIPE_EXPECTED_ACCOUNT_ID`.
 4. Run `node scripts/provision-personal-plans.mjs` and `node scripts/provision-software-catalog.mjs` (and credit pack provision if applicable).
 5. Copy emitted Price/Product IDs into Railway env (`STRIPE_PRICE_*`, catalogs).
-6. Create Stripe webhook → `https://onefinsolution.net/api/stripe/webhook`; set `STRIPE_WEBHOOK_SECRET`.
+6. Create Stripe webhook → `https://onefinsolution.store/api/stripe/webhook`; set `STRIPE_WEBHOOK_SECRET`.
 7. Connect Resend + domain DNS; set `RESEND_API_KEY` / from addresses.
 8. Deploy from `aidfz/onefinsolution-store` `main`.
 9. Smoke-test: health, signup/login email, subscription checkout, credits, software checkout, webhook ledger.

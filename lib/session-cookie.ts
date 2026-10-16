@@ -28,7 +28,7 @@ if (
 }
 
 // Prefer explicit SESSION_COOKIE_DOMAIN; otherwise derive from NEXT_PUBLIC_SITE_URL
-// so production auth cookies bind to onefinsolution.net after the domain migration.
+// so production auth cookies bind to onefinsolution.store after the domain migration.
 const domain =
   production && configuredDomain && configuredDomain !== 'localhost'
     ? configuredDomain

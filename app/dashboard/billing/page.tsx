@@ -1,8 +1,8 @@
 import { Suspense } from 'react';
 import Link from 'next/link';
 import { PaymentMethodsPanel } from '@/components/payment-methods-panel';
-import planIds from '@/billing/personal-plan-ids.json';
 import { findPlan, plans, priceLabel } from '@/lib/plans';
+import { planKeyForPriceId } from '@/lib/personal-plan-ids';
 import { currentUser } from '@/lib/session';
 import { ownedQuery } from '@/lib/db';
 import { redirect } from 'next/navigation';
@@ -15,7 +15,7 @@ import { PlanManagement } from '@/components/plan-management';
 import { BillingStatusBanner } from '@/components/billing-status-banner';
 
 function planTitle(priceId: string) {
-  const key = Object.entries(planIds.prices).find(([, id]) => id === priceId)?.[0];
+  const key = planKeyForPriceId(priceId);
   return key ? `${findPlan(key).name} - ${priceLabel(findPlan(key))}` : 'Legacy subscription';
 }
 
@@ -61,7 +61,7 @@ export default async function Billing({
       <section className="stack">
         {subscriptions.length ? (
           subscriptions.map((sub) => {
-            const currentPlanKey = Object.entries(planIds.prices).find(([, id]) => id === sub.price_id)?.[0] || null;
+            const currentPlanKey = planKeyForPriceId(sub.price_id);
             const currentPlan = plans.find((plan) => plan.key === currentPlanKey);
             const nextPlan = plans.find((plan) => plan.key === sub.next_plan_key);
             return (
