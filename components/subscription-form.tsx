@@ -3,7 +3,11 @@ import { useState, useMemo } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import Link from 'next/link';
-import { prepareSubscription, finishSubscription } from '@/app/subscription-actions';
+import {
+  prepareSubscription,
+  finishSubscription,
+  startHostedSubscriptionCheckout,
+} from '@/app/subscription-actions';
 import { findPlan, priceLabel } from '@/lib/plans';
 import { publicSitePath } from '@/lib/site-url';
 
@@ -132,6 +136,7 @@ export function SubscriptionForm({
   const [paymentSecret, setPaymentSecret] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [hostedBusy, setHostedBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const billingUrl = '/dashboard/billing?billing=success';
   const cancelledUrl = '/pricing?billing=cancelled';
@@ -147,6 +152,21 @@ export function SubscriptionForm({
           ? `Your trial has started. First automatic payment: ${new Date(result.data.trialEnd!).toLocaleString()}.`
           : 'Your subscription request is recorded. Paid access appears after payment confirmation.',
       );
+  }
+
+  async function startHostedCheckout() {
+    setHostedBusy(true);
+    setError('');
+    try {
+      const result = await startHostedSubscriptionCheckout(planKey, mode);
+      if (result.error) throw new Error(result.error);
+      const url = result.data?.url;
+      if (!url) throw new Error('Unable to start secure checkout.');
+      window.location.assign(url);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Unable to start secure checkout.');
+      setHostedBusy(false);
+    }
   }
 
   if (notice)
@@ -181,14 +201,14 @@ export function SubscriptionForm({
       </div>
     );
 
-  return (
-    <div className="stack">
-      {error && (
-        <p className="notice error" role="alert">
-          {error}
-        </p>
-      )}
-      {setup ? (
+  if (setup) {
+    return (
+      <div className="stack">
+        {error && (
+          <p className="notice error" role="alert">
+            {error}
+          </p>
+        )}
         <Elements stripe={stripe} options={{ clientSecret: setup.clientSecret }} key={setup.clientSecret}>
           <CardForm
             planKey={planKey}
@@ -198,10 +218,39 @@ export function SubscriptionForm({
             complete={complete}
           />
         </Elements>
-      ) : (
+        <p className="muted">
+          Prefer Stripe-hosted checkout?{' '}
+          <button type="button" className="text-link" disabled={hostedBusy} onClick={startHostedCheckout}>
+            Continue to secure checkout
+          </button>
+        </p>
+        <p>
+          <a className="text-link" href={cancelledUrl}>
+            Cancel and return to pricing
+          </a>
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="stack">
+      {error && (
+        <p className="notice error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="stack" style={{ gap: '0.75rem', maxWidth: 440 }}>
+        <button className="button" disabled={hostedBusy || busy} onClick={startHostedCheckout}>
+          {hostedBusy
+            ? 'Redirecting…'
+            : resumeSetup
+              ? 'Continue to secure checkout'
+              : 'Continue to secure checkout'}
+        </button>
         <button
-          className="button"
-          disabled={busy}
+          className="button secondary"
+          disabled={busy || hostedBusy}
           onClick={async () => {
             setBusy(true);
             setError('');
@@ -222,10 +271,10 @@ export function SubscriptionForm({
           {busy
             ? 'Preparing...'
             : resumeSetup
-              ? 'Accept displayed terms & finish subscription'
-              : 'Continue to secure card setup'}
+              ? 'Accept displayed terms & finish on this page'
+              : 'Pay on this page'}
         </button>
-      )}
+      </div>
       <p>
         <a className="text-link" href={cancelledUrl}>
           Cancel and return to pricing

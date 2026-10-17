@@ -12,7 +12,7 @@ const onefinWeb = service({
     branch: "main",
   },
   networking: {
-    publicHost: "onefinsolution.net",
+    publicHost: "onefinsolution.store",
   },
   config: {
     builder: "RAILPACK",
@@ -23,12 +23,12 @@ const onefinWeb = service({
   variables: {
     NODE_ENV: "production",
     BILLING_PROVIDER: "stripe",
-    NEXT_PUBLIC_SITE_URL: "https://onefinsolution.net",
-    SESSION_COOKIE_DOMAIN: "onefinsolution.net",
-    EMAIL_FROM: "One Fin Solution <noreply@onefinsolution.net>",
-    EMAIL_FROM_AUTH: "One Fin Solution Auth <auth@onefinsolution.net>",
-    EMAIL_FROM_BILLING: "One Fin Solution Billing <billing@onefinsolution.net>",
-    EMAIL_REPLY_TO: "support@onefinsolution.net",
+    NEXT_PUBLIC_SITE_URL: "https://onefinsolution.store",
+    SESSION_COOKIE_DOMAIN: "onefinsolution.store",
+    EMAIL_FROM: "One Fin Solution <noreply@onefinsolution.store>",
+    EMAIL_FROM_AUTH: "One Fin Solution Auth <auth@onefinsolution.store>",
+    EMAIL_FROM_BILLING: "One Fin Solution Billing <billing@onefinsolution.store>",
+    EMAIL_REPLY_TO: "support@onefinsolution.store",
     // Secrets / account-specific values stay outside committed IaC:
     // DATABASE_URL, SESSION_SECRET, WORKSPACE_SIGNING_KEY,
     // STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,

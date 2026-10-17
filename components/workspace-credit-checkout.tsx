@@ -8,6 +8,7 @@ import {
   createWorkspaceCreditPaymentIntent,
   prepareWorkspaceCardUpdate,
   saveWorkspaceCard,
+  startWorkspaceHostedCheckout,
   workspaceCreditPurchaseStatus,
 } from '@/app/workspace-actions';
 import { publicSitePath } from '@/lib/site-url';
@@ -49,6 +50,7 @@ function CreditPaymentForm({
   const [mode, setMode] = useState<'saved' | 'new'>(savedMethods.length ? 'saved' : 'new');
   const [selectedId, setSelectedId] = useState(defaultId);
   const [busy, setBusy] = useState(false);
+  const [hostedBusy, setHostedBusy] = useState(false);
   const [error, setError] = useState('');
   const successUrl = publicSitePath(
     `/workspace?purchase=${encodeURIComponent(purchaseId)}&billing=success`,
@@ -173,6 +175,7 @@ function CardSetupForm({ returnPath }: { returnPath: string }) {
   const stripe = useStripe();
   const elements = useElements();
   const [busy, setBusy] = useState(false);
+  const [hostedBusy, setHostedBusy] = useState(false);
   const [error, setError] = useState('');
   const successUrl = publicSitePath(`${returnPath}?billing=card_saved`);
   const cancelledUrl = `${returnPath}?billing=cancelled`;
@@ -242,6 +245,7 @@ export function WorkspaceCreditCheckout({
   const cancelledUrl = returnPath;
 
   const [busy, setBusy] = useState(false);
+  const [hostedBusy, setHostedBusy] = useState(false);
   const [error, setError] = useState('');
   const [amountUsd, setAmountUsd] = useState(String(WORKSPACE_CREDIT_DEFAULT_AMOUNT_CENTS / 100));
   const [payment, setPayment] = useState<{
@@ -265,6 +269,20 @@ export function WorkspaceCreditCheckout({
     parsedAmountCents <= WORKSPACE_CREDIT_MAX_AMOUNT_CENTS
       ? creditsFromAmountCents(parsedAmountCents)
       : null;
+
+  async function startHostedCredits() {
+    setHostedBusy(true);
+    setError('');
+    try {
+      const result = await startWorkspaceHostedCheckout(amountUsd);
+      if ('error' in result && result.error) throw new Error(result.error);
+      if (!('url' in result) || !result.url) throw new Error('Unable to start secure checkout.');
+      window.location.assign(result.url);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Unable to start secure checkout.');
+      setHostedBusy(false);
+    }
+  }
 
   async function startCredits() {
     setBusy(true);
@@ -414,20 +432,39 @@ export function WorkspaceCreditCheckout({
           {error}
         </p>
       ) : null}
-      <button
-        className="button"
-        type="button"
-        disabled={busy || (mode === 'credits' && previewCredits == null)}
-        onClick={() => void (mode === 'credits' ? startCredits() : startCard())}
-      >
-        {busy
-          ? 'Preparing secure checkout…'
-          : mode === 'credits'
-            ? previewCredits != null
-              ? `Continue · ${formatWorkspaceCreditUsd(parsedAmountCents!)} / ${previewCredits.toLocaleString()} credits`
-              : 'Enter a valid amount'
-            : 'Continue to secure card setup'}
-      </button>
+      {mode === 'credits' ? (
+        <>
+          <button
+            className="button"
+            type="button"
+            disabled={hostedBusy || busy || previewCredits == null}
+            onClick={() => void startHostedCredits()}
+          >
+            {hostedBusy
+              ? 'Redirecting…'
+              : previewCredits != null
+                ? `Pay securely · ${formatWorkspaceCreditUsd(parsedAmountCents!)} / ${previewCredits.toLocaleString()} credits`
+                : 'Enter a valid amount'}
+          </button>
+          <button
+            className="button secondary"
+            type="button"
+            disabled={busy || hostedBusy || previewCredits == null}
+            onClick={() => void startCredits()}
+          >
+            {busy ? 'Preparing…' : 'Pay on this page'}
+          </button>
+        </>
+      ) : (
+        <button
+          className="button"
+          type="button"
+          disabled={busy}
+          onClick={() => void startCard()}
+        >
+          {busy ? 'Preparing secure checkout…' : 'Continue to secure card setup'}
+        </button>
+      )}
       <p>
         <a className="text-link" href={cancelledUrl}>
           Cancel and return to Workspace

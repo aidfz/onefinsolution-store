@@ -8,6 +8,7 @@ import {
   createSoftwarePaymentIntent,
   listSoftwarePaymentMethods,
   softwarePurchaseStatus,
+  startSoftwareHostedCheckout,
 } from './actions';
 
 function PaymentForm({
@@ -139,6 +140,7 @@ export function CheckoutForm({
   const [payment, setPayment] = useState<{ clientSecret: string; purchaseId: string; savedMethods: Array<{ id: string; brand: string; last4: string; expMonth?: number; expYear?: number; isDefault?: boolean }> } | null>(null);
   const [savePaymentMethod, setSavePaymentMethod] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [isHostedPending, startHostedTransition] = useTransition();
   const stripePromise = useMemo(() => publishableKey ? loadStripe(publishableKey) : Promise.resolve(null), [publishableKey]);
 
   function startCheckout(event: React.FormEvent<HTMLFormElement>) {
@@ -205,10 +207,40 @@ export function CheckoutForm({
         Save this card to my separate Software account for future Software payments.
       </label>
       {error && <p className="software-checkout-error" role="alert">{error}</p>}
-      <button type="submit" disabled={isPending}>
-        {isPending ? 'Preparing secure payment…' : 'Continue to secure payment'}
+      <button
+        type="button"
+        disabled={isPending || isHostedPending}
+        onClick={() => {
+          setError('');
+          startHostedTransition(async () => {
+            try {
+              const cents = Math.round(Number.parseFloat(amount || '0') * 100);
+              if (!Number.isFinite(cents) || cents < 500) {
+                setError('Enter a valid amount (minimum $5.00).');
+                return;
+              }
+              const result = await startSoftwareHostedCheckout(
+                kind,
+                id,
+                cents,
+              );
+              if (result.error || !('url' in result) || !result.url) {
+                setError(result.error || 'Unable to start secure checkout.');
+                return;
+              }
+              window.location.assign(result.url);
+            } catch (failure) {
+              setError(failure instanceof Error ? failure.message : 'Unable to start secure checkout.');
+            }
+          });
+        }}
+      >
+        {isHostedPending ? 'Redirecting…' : 'Pay securely'}
       </button>
-      <small>Payment is collected securely here. Subscription and Workspace payment details are not used.</small>
+      <button type="submit" className="software-checkout-cancel" disabled={isPending || isHostedPending}>
+        {isPending ? 'Preparing secure payment…' : 'Pay on this page'}
+      </button>
+      <small>Hosted Stripe Checkout is preferred. On-page payment still uses your separate Software billing account.</small>
     </form>
   );
 }

@@ -13,6 +13,7 @@ import {
   parseSoftwarePaymentAmount,
   remainingBalanceCents,
 } from '@/lib/software-purchase';
+import { createSoftwareHostedCheckout } from '@/lib/hosted-checkout';
 import { stripeObjectMatchesMode } from '@/lib/billing-environment';
 import {
   assertCustomerMatchesScope,
@@ -209,6 +210,42 @@ export async function createSoftwarePaymentIntent(input: {
   } catch (error) {
     console.error('Unable to create software payment intent:', error);
     return { error: 'Unable to start Software checkout. Please try again.' };
+  }
+}
+
+
+export async function startSoftwareHostedCheckout(
+  kind: string,
+  id: string,
+  amountCents: number,
+  purchaseId?: string | null,
+) {
+  try {
+    if (!kind || !id) {
+      return { error: 'Missing product details.' } as const;
+    }
+    const cents = Math.round(Number(amountCents));
+    if (!Number.isSafeInteger(cents) || cents < 500) {
+      return { error: 'Enter a valid amount (minimum $5.00).' } as const;
+    }
+    const result = await createSoftwareHostedCheckout({
+      kind,
+      id,
+      amountCents: cents,
+      purchaseId: purchaseId || undefined,
+    });
+    if (!result?.url) {
+      return { error: 'Unable to start secure checkout.' } as const;
+    }
+    return {
+      url: result.url,
+      sessionId: result.sessionId,
+      purchaseId: result.purchaseId,
+    } as const;
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Unable to start secure checkout.',
+    } as const;
   }
 }
 

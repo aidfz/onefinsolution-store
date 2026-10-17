@@ -26,7 +26,7 @@ function loadEnvFile(file) {
 
 loadEnvFile(resolve(process.cwd(), '.env'));
 loadEnvFile(resolve(process.cwd(), '.env.local'));
-process.env.NEXT_PUBLIC_SITE_URL ||= 'https://onefinsolution.net';
+process.env.NEXT_PUBLIC_SITE_URL ||= 'https://onefinsolution.store';
 
 const key = process.env.RESEND_API_KEY?.trim();
 if (!key) {
@@ -41,7 +41,7 @@ if (!key.startsWith('re_')) {
 const from =
   process.env.EMAIL_FROM?.trim() ||
   process.env.RESEND_FROM?.trim() ||
-  'One Fin Solution <noreply@onefinsolution.net>';
+  'One Fin Solution <noreply@onefinsolution.store>';
 
 const explicitTo =
   process.argv.find((arg, i) => process.argv[i - 1] === '--to' && arg.includes('@')) ||
@@ -69,7 +69,7 @@ for (const d of domains) {
   console.log(`  - ${d.name} status=${d.status} sending=${sending} region=${d.region || 'n/a'}`);
 }
 
-const targetDomain = 'onefinsolution.net';
+const targetDomain = 'onefinsolution.store';
 const match = domains.find((d) => d.name === targetDomain || d.name?.endsWith(`.${targetDomain}`));
 if (!match) {
   console.warn(`Warning: ${targetDomain} not found on this Resend account yet.`);
@@ -110,24 +110,24 @@ const samples = {
   welcome: {
     toName: 'Boss',
     email: to,
-    actionUrl: 'https://onefinsolution.net/confirmation?token=test-welcome',
+    actionUrl: 'https://onefinsolution.store/confirmation?token=test-welcome',
   },
   login_reminder: {
     toName: 'Boss',
-    actionUrl: 'https://onefinsolution.net/sign-in?token=test-login',
+    actionUrl: 'https://onefinsolution.store/sign-in?token=test-login',
   },
   forgot_password: {
     toName: 'Boss',
-    actionUrl: 'https://onefinsolution.net/reset-password?token=test-reset',
+    actionUrl: 'https://onefinsolution.store/reset-password?token=test-reset',
   },
   password_reset: {
     toName: 'Boss',
-    actionUrl: 'https://onefinsolution.net/sign-in',
+    actionUrl: 'https://onefinsolution.store/sign-in',
   },
   activity_key: {
     toName: 'Boss',
     code: '482193',
-    actionUrl: 'https://onefinsolution.net/workspace',
+    actionUrl: 'https://onefinsolution.store/workspace',
   },
   subscription_plan_reminder: {
     toName: 'Boss',

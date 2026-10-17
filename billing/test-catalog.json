@@ -1,0 +1,15 @@
+{
+  "products": [
+    {
+      "name": "OneFin Workspace Credits",
+      "code": "workspace_credits",
+      "prices": [
+        {
+          "code": "credits_50",
+          "amount": 500,
+          "credits": 50
+        }
+      ]
+    }
+  ]
+}

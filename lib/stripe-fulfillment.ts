@@ -3,6 +3,10 @@ import Stripe from 'stripe';
 import { query, transaction } from './db';
 import { creditPlans } from './credit-config';
 import { managedPlan } from './subscription-catalog';
+import {
+  assertWorkspaceCreditAmountCents,
+  creditsFromAmountCents,
+} from './workspace-credit-limits';
 import { applySoftwareStorefrontRefund } from './software-refund';
 import { queueBillingNotice } from './billing-notices';
 import { priceLabel } from './plans';
@@ -160,24 +164,155 @@ export async function fulfillStripeEvent(stripe: Stripe, event: Stripe.Event) {
       /* credit receipt is best-effort */
     }
   } else if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
-    const session = await stripe.checkout.sessions.retrieve((event.data.object as Stripe.Checkout.Session).id);
-    if (session.metadata?.app !== 'chatbot-template' || session.mode !== 'payment' || session.payment_status !== 'paid') return;
-    if (!stripeObjectMatchesMode(session.livemode) || session.currency !== 'usd') throw new Error('Unexpected checkout currency or mode.');
-    const user = await owner(session.customer, 'workspace');
-    for await (const item of stripe.checkout.sessions.listLineItems(session.id, { limit: 100 })) {
-      if (!item.price) throw new Error('Missing price.');
-      await grant(user, `checkout:${session.id}:${item.id}`, item.price.id, item.quantity || 0);
-    }
-    const paid =
-      typeof session.amount_total === 'number'
-        ? `$${(session.amount_total / 100).toFixed(2)} ${String(session.currency || 'usd').toUpperCase()}`
-        : null;
-    await queueBillingNotice(
-      `workspace-credits-checkout:${session.id}`,
-      user,
-      paid ? `Credits purchased - ${paid}` : 'Workspace credits added',
-      `Your workspace credit purchase completed successfully${paid ? ` (${paid})` : ''}. Open ${sitePath('/workspace')} to use your balance.`,
+    // Hosted Checkout on pay.onefinsolution.store returns session.url under Stripe's
+    // custom domain. Fulfillment is scoped by metadata.billing_scope.
+    const session = await stripe.checkout.sessions.retrieve(
+      (event.data.object as Stripe.Checkout.Session).id,
+      { expand: ['payment_intent'] },
     );
+    if (!stripeObjectMatchesMode(session.livemode)) {
+      throw new Error('Unexpected checkout livemode.');
+    }
+
+    const scope = session.metadata?.billing_scope;
+    const app = session.metadata?.app;
+
+    // Software storefront sessions are fulfilled by software-storefront-fulfillment.
+    if (app === 'onefin-software-store' || scope === 'software') {
+      return;
+    }
+
+    if (app !== 'chatbot-template') return;
+
+    // Subscription Checkout: membership is applied via customer.subscription.* + invoice.paid.
+    if (session.mode === 'subscription') {
+      if (session.subscription) {
+        const subId =
+          typeof session.subscription === 'string'
+            ? session.subscription
+            : session.subscription.id;
+        const sub = await stripe.subscriptions.retrieve(subId);
+        if (sub.metadata?.app === 'chatbot-template') {
+          const user = await owner(session.customer, 'subscription');
+          await recordSubscription(user, sub);
+        }
+      }
+      return;
+    }
+
+    // Workspace credits one-time Checkout
+    if (
+      session.mode === 'payment' &&
+      session.payment_status === 'paid' &&
+      (scope === 'workspace' || !scope)
+    ) {
+      if (session.currency && session.currency !== 'usd') {
+        throw new Error('Unexpected checkout currency.');
+      }
+
+      const purchaseId = session.metadata?.purchase_id;
+      const userId = session.metadata?.user_id;
+      const intentRef = session.payment_intent;
+      const intentId =
+        typeof intentRef === 'string' ? intentRef : intentRef?.id || null;
+
+      // Preferred path: ledger row created before redirect (flexible amounts).
+      if (
+        purchaseId &&
+        userId &&
+        /^[0-9a-f-]{36}$/i.test(purchaseId) &&
+        /^[0-9a-f-]{36}$/i.test(userId)
+      ) {
+        const purchaseRows = await query<{ amount: number; credits: number; status: string }>(
+          `select amount, credits, status from workspace_credit_purchases
+           where id=$1 and user_id=$2`,
+          [purchaseId, userId],
+        );
+        const purchase = purchaseRows[0];
+        if (!purchase) throw new Error('Workspace credit purchase record unavailable.');
+        if (purchase.status === 'succeeded') return;
+
+        const amountCents = Number(purchase.amount);
+        const credits = Number(purchase.credits);
+        assertWorkspaceCreditAmountCents(amountCents);
+        if (credits !== creditsFromAmountCents(amountCents)) {
+          throw new Error('Workspace credit purchase amount/credits mismatch.');
+        }
+        if (
+          typeof session.amount_total === 'number' &&
+          session.amount_total !== amountCents
+        ) {
+          throw new Error('Workspace checkout amount mismatch.');
+        }
+
+        const paymentOwner = await owner(session.customer, 'workspace');
+        if (paymentOwner !== userId) throw new Error('Workspace checkout owner mismatch.');
+
+        await transaction(async (client) => {
+          const { rows } = await client.query(
+            `select id from workspace_credit_purchases
+             where id=$1 and user_id=$2 and amount=$3 and credits=$4
+             for update`,
+            [purchaseId, userId, amountCents, credits],
+          );
+          if (!rows.length) throw new Error('Workspace credit purchase record unavailable.');
+          const creditRef = intentId
+            ? `workspace:checkout-pi:${intentId}`
+            : `workspace:checkout:${session.id}`;
+          await client.query('select grant_credits($1,$2,$3)', [userId, creditRef, credits]);
+          if (intentId) {
+            await client.query(
+              `insert into workspace_credit_transactions(user_id,purchase_id,stripe_payment_intent,amount,currency,credits,receipt_url)
+               values($1,$2,$3,$4,'usd',$5,null) on conflict(stripe_payment_intent) do nothing`,
+              [userId, purchaseId, intentId, amountCents, credits],
+            );
+            await client.query(
+              `update workspace_credit_purchases
+                  set status='succeeded', stripe_payment_intent=$3
+                where id=$1 and user_id=$2 and status='pending'`,
+              [purchaseId, userId, intentId],
+            );
+          } else {
+            await client.query(
+              `update workspace_credit_purchases
+                  set status='succeeded'
+                where id=$1 and user_id=$2 and status='pending'`,
+              [purchaseId, userId],
+            );
+          }
+        });
+
+        const paid =
+          typeof session.amount_total === 'number'
+            ? `${(session.amount_total / 100).toFixed(2)} USD`
+            : null;
+        await queueBillingNotice(
+          `workspace-credits-checkout:${session.id}`,
+          userId,
+          paid ? `Credits purchased - ${paid}` : 'Workspace credits added',
+          `Your workspace credit purchase completed successfully${paid ? ` (${paid})` : ''}. Open ${sitePath('/workspace')} to use your balance.`,
+        );
+        return;
+      }
+
+      // Legacy fallback: grant from configured STRIPE_CREDIT_PLANS price ids
+      const user = await owner(session.customer, 'workspace');
+      for await (const item of stripe.checkout.sessions.listLineItems(session.id, { limit: 100 })) {
+        if (!item.price) throw new Error('Missing price.');
+        await grant(user, `checkout:${session.id}:${item.id}`, item.price.id, item.quantity || 0);
+      }
+      const paid =
+        typeof session.amount_total === 'number'
+          ? `${(session.amount_total / 100).toFixed(2)} ${String(session.currency || 'usd').toUpperCase()}`
+          : null;
+      await queueBillingNotice(
+        `workspace-credits-checkout:${session.id}`,
+        user,
+        paid ? `Credits purchased - ${paid}` : 'Workspace credits added',
+        `Your workspace credit purchase completed successfully${paid ? ` (${paid})` : ''}. Open ${sitePath('/workspace')} to use your balance.`,
+      );
+      return;
+    }
   } else if (event.type === 'invoice.paid') {
     const invoiceId = (event.data.object as Stripe.Invoice).id;
     if (!invoiceId) throw new Error('Missing invoice ID.');

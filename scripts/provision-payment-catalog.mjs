@@ -19,7 +19,7 @@ import nextEnv from '@next/env';
 nextEnv.loadEnvConfig(process.cwd());
 
 const apply = process.argv.includes('--apply');
-const site = process.env.NEXT_PUBLIC_SITE_URL || process.env.APP_BASE_URL || 'https://onefinsolution.net';
+const site = process.env.NEXT_PUBLIC_SITE_URL || process.env.APP_BASE_URL || 'https://onefinsolution.store';
 const key = process.env.STRIPE_SECRET_KEY || '';
 if (!key.startsWith('sk_test_') && !key.startsWith('sk_live_')) {
   console.error('STRIPE_SECRET_KEY missing or invalid');

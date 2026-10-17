@@ -19,6 +19,7 @@ import { throttle } from '@/lib/auth-service';
 import { revalidatePath } from 'next/cache';
 import { expectedStripeLivemode, stripeObjectMatchesMode } from '@/lib/billing-environment';
 import {
+import { createWorkspaceCreditsHostedCheckout } from '@/lib/hosted-checkout';
   assertCustomerMatchesScope,
   assertSetupIntentOwnedByCustomer,
   requireOwnedPaymentMethod,
@@ -441,6 +442,21 @@ export async function createWorkspaceCreditPaymentIntent(
     } as const;
   }
 }
+
+export async function startWorkspaceHostedCheckout(amountUsd?: number | string | null) {
+  try {
+    const result = await createWorkspaceCreditsHostedCheckout({ amountUsd });
+    if (!result?.url) {
+      return { error: 'Unable to start secure checkout.' } as const;
+    }
+    return { url: result.url, sessionId: result.sessionId } as const;
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Unable to start secure checkout.',
+    } as const;
+  }
+}
+
 
 
 export async function workspaceCreditPurchaseStatus(purchaseId: string) {
