@@ -127,8 +127,7 @@ export default async function Billing({
       {subscriptions.length > 0 && /^pk_test_/.test(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '') && (
         <BillingCard
           publishableKey={process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!}
-          unpaidIds={subscriptions.filter((sub) => ['past_due', 'incomplete'].includes(sub.status)).map((sub) => sub.id)}
-          resumeSetup={params.setup_intent}
+          hasOutstanding={subscriptions.some((sub) => ['past_due', 'incomplete'].includes(sub.status))}
         />
       )}
       <div className="notice">

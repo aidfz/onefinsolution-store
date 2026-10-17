@@ -226,6 +226,41 @@ export async function setWorkspaceDefaultPaymentMethod(paymentMethodId: string) 
   }
 }
 
+export async function setWorkspaceAutoReloadSettings(input: {
+  enabled: boolean;
+  threshold: number;
+  amountUsd?: number | string | null;
+}): Promise<{ error?: string; autoReload?: WorkspaceAutoReloadSettings }> {
+  const user = await currentUser();
+  if (!user) return { error: 'Please sign in to manage auto-reload.' };
+  try {
+    const threshold = Math.max(0, Math.min(1_000_000, Math.floor(Number(input.threshold) || 0)));
+    const quote = resolveWorkspaceCreditQuote({ amountUsd: input.amountUsd, allowDefault: true });
+    const enabled = Boolean(input.enabled);
+    if (enabled) {
+      const current = await readWorkspaceAutoReloadSettings(user.id);
+      if (!current.hasPaymentMethod) {
+        return { error: 'Save a Workspace card before enabling auto-reload.' };
+      }
+    }
+    await query(
+      `insert into workspace_credit_settings(user_id, auto_reload_enabled, auto_reload_threshold, reload_amount_cents, updated_at)
+       values ($1,$2,$3,$4,now())
+       on conflict (user_id) do update set
+         auto_reload_enabled=excluded.auto_reload_enabled,
+         auto_reload_threshold=excluded.auto_reload_threshold,
+         reload_amount_cents=excluded.reload_amount_cents,
+         updated_at=now()`,
+      [user.id, enabled, threshold, quote.amountCents],
+    );
+    revalidatePath('/workspace');
+    return { autoReload: await readWorkspaceAutoReloadSettings(user.id) };
+  } catch (error) {
+    console.error('Unable to update Workspace auto-reload settings:', error);
+    return { error: error instanceof Error ? error.message : 'Unable to update auto-reload settings.' };
+  }
+}
+
 export async function removeWorkspacePaymentMethod(paymentMethodId: string) {
   const user = await currentUser();
   if (!user) return { error: 'Please sign in to manage Workspace payment methods.' } as const;

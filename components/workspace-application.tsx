@@ -32,6 +32,7 @@ type WorkspaceData =
       autoReload?: {
         enabled: boolean;
         threshold: number;
+        reloadAmountCents?: number;
         hasPaymentMethod: boolean;
         lastError: string | null;
         lastAt: string | null;
@@ -131,6 +132,7 @@ export function WorkspaceApplication({
   }, []);
 
   useEffect(() => {
+    let active = true;
     const params = new URLSearchParams(window.location.search);
     const purchaseId = params.get('purchase');
     const billing = params.get('billing');
