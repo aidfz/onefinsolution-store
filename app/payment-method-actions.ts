@@ -94,50 +94,33 @@ export async function listPaymentMethodsAction(): Promise<
   }
 }
 
+/** Alias for PaymentMethodsPanel. */
+export async function listPaymentMethods() {
+  return listPaymentMethodsAction();
+}
+
+/** SetupIntent / pre-payment card save removed. Cards attach only after real subscription Checkout. */
 export async function prepareCardUpdate() {
-  try {
-    const { user, customer, stripe } = await context();
-    const setup = await stripe.setupIntents.create(
-      {
-        customer,
-        usage: 'off_session',
-        allowed_payment_method_types: ['card'],
-        metadata: { app: 'chatbot-template', purpose: 'update-card', user_id: user.id },
-      } as Stripe.SetupIntentCreateParams,
-      { idempotencyKey: `onefin-card:${user.id}:${randomUUID()}` },
-    );
-    if (!stripeObjectMatchesMode(setup.livemode)) throw new Error();
-    return { secret: setup.client_secret };
-  } catch {
-    return { error: 'Unable to prepare a card update. Please try again.' };
-  }
+  return {
+    error:
+      'Separate card setup was removed. Subscribe from Pricing — your card is saved after a successful payment.',
+  } as const;
 }
 
-export async function finishCardUpdate(setupId: string) {
-  try {
-    const { user, customer, stripe } = await context();
-    const setup = await stripe.setupIntents.retrieve(setupId);
-    assertSetupIntentOwnedByCustomer(setup, customer);
-    if (setup.metadata?.purpose !== 'update-card' || setup.metadata.user_id !== user.id) {
-      throw new Error('Unable to save this card. Please retry verification.');
-    }
-    const method = stripePaymentMethodId(setup.payment_method);
-    if (!method) throw new Error('Unable to save this card. Please retry verification.');
-    await requireOwnedPaymentMethod(stripe, customer, method);
-    await stripe.customers.update(customer, {
-      invoice_settings: { default_payment_method: method },
-    });
-    for await (const sub of stripe.subscriptions.list({ customer, status: 'all', limit: 100 })) {
-      if (sub.metadata.app === 'chatbot-template' && !['canceled', 'incomplete_expired'].includes(sub.status)) {
-        await stripe.subscriptions.update(sub.id, { default_payment_method: method });
-      }
-    }
-    return { success: true };
-  } catch {
-    return { error: 'Unable to save this card. Please retry verification.' };
-  }
+/** @deprecated SetupIntent card update removed. */
+export async function finishCardUpdate(_setupId: string) {
+  return {
+    error: 'Separate card setup was removed. Use Pricing to pay for a plan directly.',
+  } as const;
 }
 
+export async function setDefaultPaymentMethod(paymentMethodId: string) {
+  return setDefaultPaymentMethodAction(paymentMethodId);
+}
+
+export async function removePaymentMethod(paymentMethodId: string) {
+  return detachPaymentMethodAction(paymentMethodId);
+}
 
 export async function setDefaultPaymentMethodAction(paymentMethodId: string) {
   try {

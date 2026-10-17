@@ -1,228 +1,154 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { loadStripe } from '@stripe/stripe-js';
-import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
+import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
-  detachPaymentMethodAction,
-  finishCardUpdate,
-  listPaymentMethodsAction,
-  prepareCardUpdate,
-  setDefaultPaymentMethodAction,
-  type SavedPaymentMethod,
+  listPaymentMethods,
+  removePaymentMethod,
+  setDefaultPaymentMethod,
 } from '@/app/payment-method-actions';
-import { Button } from '@/components/ui/button';
 
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '');
+type Method = {
+  id: string;
+  brand: string;
+  last4: string;
+  expMonth: number | null;
+  expYear: number | null;
+  isDefault: boolean;
+};
 
-function AddCardForm({ onDone }: { onDone: () => void }) {
-  const stripe = useStripe();
-  const elements = useElements();
+/**
+ * Subscription billing methods — list / default / remove only.
+ * Adding a card is done by completing a real subscription checkout (no SetupIntent).
+ */
+export function PaymentMethodsPanel() {
+  const [methods, setMethods] = useState<Method[]>([]);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function onSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!stripe || !elements) return;
-    setBusy(true);
-    setError(null);
-    const { error: submitError } = await elements.submit();
-    if (submitError) {
-      setError(submitError.message || 'Unable to validate card.');
-      setBusy(false);
-      return;
-    }
-    const result = await stripe.confirmSetup({
-      elements,
-      redirect: 'if_required',
-      confirmParams: {
-        return_url: typeof window !== 'undefined' ? window.location.href : undefined,
-      },
-    });
-    if (result.error) {
-      setError(result.error.message || 'Card verification failed.');
-      setBusy(false);
-      return;
-    }
-    const setupId = result.setupIntent?.id;
-    if (!setupId) {
-      setError('Setup did not complete.');
-      setBusy(false);
-      return;
-    }
-    const finish = await finishCardUpdate(setupId);
-    if ('error' in finish && finish.error) {
-      setError(finish.error);
-      setBusy(false);
-      return;
-    }
-    setBusy(false);
-    onDone();
-  }
-
-  return (
-    <form onSubmit={onSubmit} className="stack gap-3 rounded-xl border border-black/10 bg-white/70 p-4">
-      <PaymentElement options={{ layout: 'tabs' }} />
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      <div className="button-row">
-        <Button type="submit" disabled={busy || !stripe}>
-          {busy ? 'Saving…' : 'Save payment method'}
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-export function PaymentMethodsPanel({ compact = false }: { compact?: boolean }) {
-  const [methods, setMethods] = useState<SavedPaymentMethod[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [clientSecret, setClientSecret] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    setError(null);
-    const result = await listPaymentMethodsAction();
-    if ('error' in result) {
-      setError(result.error);
+    setError('');
+    try {
+      const result = await listPaymentMethods();
+      if (result.error) {
+        setError(result.error);
+        setMethods([]);
+        return;
+      }
+      setMethods((result.methods || []) as Method[]);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Unable to load cards.');
       setMethods([]);
-    } else {
-      setMethods(result.methods);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  const options = useMemo(
-    () =>
-      clientSecret
-        ? {
-            clientSecret,
-            appearance: { theme: 'stripe' as const },
-          }
-        : undefined,
-    [clientSecret],
-  );
-
-  async function startAddCard() {
-    setMessage(null);
-    setError(null);
-    const prepared = await prepareCardUpdate();
-    if ('error' in prepared || !prepared.secret) {
-      setError(('error' in prepared && prepared.error) || 'Unable to start card setup.');
-      return;
+  async function onDefault(id: string) {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await setDefaultPaymentMethod(id);
+      if (result.error) throw new Error(result.error);
+      setNotice('Default subscription card updated.');
+      await refresh();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Unable to update default card.');
+    } finally {
+      setBusy(false);
     }
-    setClientSecret(prepared.secret);
   }
 
-  async function makeDefault(id: string) {
-    setBusyId(id);
-    setMessage(null);
-    setError(null);
-    const result = await setDefaultPaymentMethodAction(id);
-    if ('error' in result && result.error) setError(result.error);
-    else setMessage(result.message || 'Default card updated.');
-    await refresh();
-    setBusyId(null);
-  }
-
-  async function removeCard(id: string) {
-    setBusyId(id);
-    setMessage(null);
-    setError(null);
-    const result = await detachPaymentMethodAction(id);
-    if ('error' in result && result.error) setError(result.error);
-    else setMessage(result.message || 'Card removed.');
-    await refresh();
-    setBusyId(null);
+  async function onRemove(id: string) {
+    if (!window.confirm('Remove this card from your subscription account?')) return;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await removePaymentMethod(id);
+      if (result.error) throw new Error(result.error);
+      setNotice('Card removed from your subscription account.');
+      await refresh();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Unable to remove card.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
-    <div className={compact ? 'stack gap-3' : 'stack gap-4'}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold text-slate-900">Subscription cards only</h3>
-          <p className="muted text-sm">
-            These cards pay Chat Plus plans and renewals only. They never charge workspace credits —
-            save a separate card under Workspace → Credit reloads for auto-reload.
-          </p>
-        </div>
-        <Button type="button" variant="outline" onClick={() => void startAddCard()}>
-          {clientSecret ? 'Refresh card form' : 'Add payment method'}
-        </Button>
-      </div>
-
-      {loading ? <p className="muted text-sm">Loading saved cards…</p> : null}
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      {message ? <p className="text-sm text-emerald-700">{message}</p> : null}
-
-      {!loading && methods.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-black/15 bg-white/50 p-4 text-sm text-slate-600">
-          No cards on file yet. Add a payment method to manage renewals without leaving Settings.
+    <div className="stack">
+      <h3>Subscription payment methods</h3>
+      <p className="muted text-sm" style={{ lineHeight: 1.5 }}>
+        Cards are added when you complete a real subscription payment — there is no separate card-setup
+        step. Manage defaults and removals below.
+      </p>
+      {loading ? <p className="muted">Loading…</p> : null}
+      {error ? (
+        <p className="notice error" role="alert">
+          {error}
         </p>
       ) : null}
-
-      <ul className="stack gap-2">
-        {methods.map((method) => (
-          <li
-            key={method.id}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-black/10 bg-white px-4 py-3"
-          >
-            <div>
-              <p className="font-medium capitalize text-slate-900">
-                {method.brand} ···· {method.last4}
-                {method.isDefault ? (
-                  <span className="ml-2 rounded-full bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-800">
-                    Default
-                  </span>
+      {notice ? <p className="notice success">{notice}</p> : null}
+      {!loading && methods.length === 0 ? (
+        <p className="muted">No subscription cards on file yet.</p>
+      ) : (
+        <ul className="stack" style={{ listStyle: 'none', padding: 0, gap: 10 }}>
+          {methods.map((m) => (
+            <li
+              key={m.id}
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 8,
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <span>
+                {(m.brand || 'card').toUpperCase()} ···· {m.last4}
+                {m.expMonth && m.expYear
+                  ? ` · exp ${String(m.expMonth).padStart(2, '0')}/${m.expYear}`
+                  : ''}
+                {m.isDefault ? ' · default' : ''}
+              </span>
+              <span style={{ display: 'flex', gap: 8 }}>
+                {!m.isDefault ? (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    disabled={busy}
+                    onClick={() => void onDefault(m.id)}
+                  >
+                    Make default
+                  </button>
                 ) : null}
-              </p>
-              <p className="muted text-xs">
-                Expires {method.expMonth?.toString().padStart(2, '0') || '––'}/{method.expYear || '––––'}
-              </p>
-            </div>
-            <div className="button-row">
-              {!method.isDefault ? (
-                <Button
+                <button
                   type="button"
-                  variant="outline"
-                 
-                  disabled={busyId === method.id}
-                  onClick={() => void makeDefault(method.id)}
+                  className="button secondary"
+                  disabled={busy}
+                  onClick={() => void onRemove(m.id)}
                 >
-                  Make default
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                variant="ghost"
-               
-                disabled={busyId === method.id}
-                onClick={() => void removeCard(method.id)}
-              >
-                Remove
-              </Button>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      {clientSecret && options ? (
-        <Elements stripe={stripePromise} options={options}>
-          <AddCardForm
-            onDone={() => {
-              setClientSecret(null);
-              setMessage('Payment method saved and set as default.');
-              void refresh();
-            }}
-          />
-        </Elements>
-      ) : null}
+                  Remove
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p>
+        <Link className="button" href="/pricing">
+          Pay for a plan (adds or updates card)
+        </Link>
+      </p>
     </div>
   );
 }

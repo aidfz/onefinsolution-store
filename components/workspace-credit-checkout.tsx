@@ -6,8 +6,6 @@ import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-
 import {
   confirmWorkspaceCreditWithSavedMethod,
   createWorkspaceCreditPaymentIntent,
-  prepareWorkspaceCardUpdate,
-  saveWorkspaceCard,
   startWorkspaceHostedCheckout,
   workspaceCreditPurchaseStatus,
 } from '@/app/workspace-actions';
@@ -50,7 +48,6 @@ function CreditPaymentForm({
   const [mode, setMode] = useState<'saved' | 'new'>(savedMethods.length ? 'saved' : 'new');
   const [selectedId, setSelectedId] = useState(defaultId);
   const [busy, setBusy] = useState(false);
-  const [hostedBusy, setHostedBusy] = useState(false);
   const [error, setError] = useState('');
   const successUrl = publicSitePath(
     `/workspace?purchase=${encodeURIComponent(purchaseId)}&billing=success`,
@@ -108,10 +105,11 @@ function CreditPaymentForm({
   }
 
   return (
-    <form className="stack" onSubmit={onSubmit}>
+    <form className="stack" onSubmit={(e) => void onSubmit(e)}>
       <p>
         Pay <strong>{amountLabel}</strong> for <strong>{credits.toLocaleString()} credits</strong>.
-        Saved cards stay on your Workspace billing customer only.
+        This is the real charge — no temporary hold. After success the card stays on your Workspace
+        billing account only.
       </p>
       {savedMethods.length > 0 ? (
         <div className="stack" style={{ gap: 8 }}>
@@ -122,7 +120,7 @@ function CreditPaymentForm({
               disabled={busy}
               onClick={() => setMode('saved')}
             >
-              Use saved card
+              Use a saved card
             </button>
             <button
               type="button"
@@ -171,62 +169,12 @@ function CreditPaymentForm({
   );
 }
 
-function CardSetupForm({ returnPath }: { returnPath: string }) {
-  const stripe = useStripe();
-  const elements = useElements();
-  const [busy, setBusy] = useState(false);
-  const [hostedBusy, setHostedBusy] = useState(false);
-  const [error, setError] = useState('');
-  const successUrl = publicSitePath(`${returnPath}?billing=card_saved`);
-  const cancelledUrl = `${returnPath}?billing=cancelled`;
-
-  async function onSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!stripe || !elements) return;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await stripe.confirmSetup({
-        elements,
-        confirmParams: { return_url: successUrl },
-        redirect: 'if_required',
-      });
-      if (result.error) {
-        setError(result.error.message || 'Unable to save card.');
-        return;
-      }
-      const setupIntent = result.setupIntent;
-      if (!setupIntent?.id) throw new Error('Card setup confirmation missing.');
-      const saved = await saveWorkspaceCard(setupIntent.id);
-      if (saved.error) throw new Error(saved.error);
-      location.assign(successUrl);
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Unable to save card.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form className="stack" onSubmit={onSubmit}>
-      <PaymentElement />
-      {error ? (
-        <p role="alert" className="notice error">
-          {error}
-        </p>
-      ) : null}
-      <button className="button" disabled={!stripe || busy} type="submit">
-        {busy ? 'Saving…' : 'Save Workspace card'}
-      </button>
-      <p>
-        <a className="text-link" href={cancelledUrl}>
-          Cancel
-        </a>
-      </p>
-    </form>
-  );
-}
-
+/**
+ * Workspace credits purchase UI.
+ * Pay-first only — no SetupIntent / separate save-card step and no $1/$2 auth hold.
+ * Card is saved on the Workspace Stripe Customer after a successful real payment
+ * via PaymentIntent/Checkout Session setup_future_usage.
+ */
 export function WorkspaceCreditCheckout({
   mode,
   purchaseId,
@@ -256,7 +204,6 @@ export function WorkspaceCreditCheckout({
     amountLabel: string;
     savedMethods: SavedMethod[];
   } | null>(null);
-  const [setupSecret, setSetupSecret] = useState<string | null>(null);
 
   const parsedAmountCents = (() => {
     const n = Number(amountUsd);
@@ -278,8 +225,8 @@ export function WorkspaceCreditCheckout({
       if ('error' in result && result.error) throw new Error(result.error);
       if (!('url' in result) || !result.url) throw new Error('Unable to start secure checkout.');
       window.location.assign(result.url);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Unable to start secure checkout.');
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Unable to start secure checkout.');
       setHostedBusy(false);
     }
   }
@@ -288,7 +235,6 @@ export function WorkspaceCreditCheckout({
     setBusy(true);
     setError('');
     try {
-      // purchaseId is optional: server creates a pending workspace_credit_purchases row when omitted.
       const result = await createWorkspaceCreditPaymentIntent(purchaseId || null, amountUsd);
       if ('error' in result && result.error) throw new Error(result.error);
       if (!('clientSecret' in result) || !result.clientSecret) {
@@ -311,9 +257,10 @@ export function WorkspaceCreditCheckout({
           ? (result.savedMethods as SavedMethod[])
           : [];
       setPayment({
-        purchaseId: ('purchaseId' in result && typeof result.purchaseId === 'string' && result.purchaseId)
-          ? result.purchaseId
-          : (purchaseId || ''),
+        purchaseId:
+          'purchaseId' in result && typeof result.purchaseId === 'string' && result.purchaseId
+            ? result.purchaseId
+            : purchaseId || '',
         clientSecret: result.clientSecret,
         amountCents,
         credits,
@@ -327,23 +274,28 @@ export function WorkspaceCreditCheckout({
     }
   }
 
-  async function startCard() {
-    setBusy(true);
-    setError('');
-    try {
-      const result = await prepareWorkspaceCardUpdate();
-      if (result.error || !result.clientSecret) {
-        throw new Error(result.error || 'Unable to start card setup.');
-      }
-      setSetupSecret(result.clientSecret);
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Unable to start card setup.');
-    } finally {
-      setBusy(false);
-    }
+  if (mode === 'card') {
+    return (
+      <div className="stack">
+        <p className="muted" style={{ lineHeight: 1.5 }}>
+          Cards are saved only after a successful credit purchase. There is no separate save-card step
+          and no temporary authorization charge.
+        </p>
+        <p>
+          <a className="button" href="/checkout/credits">
+            Buy credits to add a payment method
+          </a>
+        </p>
+        <p>
+          <a className="text-link" href={cancelledUrl}>
+            Cancel and return to Workspace
+          </a>
+        </p>
+      </div>
+    );
   }
 
-  if (mode === 'credits' && payment && stripePromise) {
+  if (payment && stripePromise) {
     return (
       <div className="stack">
         <Elements stripe={stripePromise} options={{ clientSecret: payment.clientSecret }}>
@@ -359,112 +311,75 @@ export function WorkspaceCreditCheckout({
     );
   }
 
-  if (mode === 'card' && setupSecret && stripePromise) {
-    return (
-      <div className="stack">
-        <Elements stripe={stripePromise} options={{ clientSecret: setupSecret }}>
-          <CardSetupForm returnPath={returnPath} />
-        </Elements>
-      </div>
-    );
-  }
-
   return (
     <div className="stack">
-      {mode === 'credits' ? (
-        <div className="stack" style={{ gap: 12 }}>
-          <div>
-            <h2 style={{ margin: '0 0 0.35rem', fontSize: '1.35rem' }}>
-              {previewCredits != null
-                ? `Add ${previewCredits.toLocaleString()} Workspace credits`
-                : 'Add Workspace credits'}
-            </h2>
-            <p className="muted" style={{ margin: 0 }}>
-              {previewCredits != null && parsedAmountCents != null
-                ? `${formatWorkspaceCreditUsd(parsedAmountCents)} · ${WORKSPACE_CREDITS_PER_USD} credits per $1 · min $${(
-                    WORKSPACE_CREDIT_MIN_AMOUNT_CENTS / 100
-                  ).toFixed(0)}, max $${(WORKSPACE_CREDIT_MAX_AMOUNT_CENTS / 100).toFixed(0)}`
-                : `Enter an amount between $${(WORKSPACE_CREDIT_MIN_AMOUNT_CENTS / 100).toFixed(0)} and $${(
-                    WORKSPACE_CREDIT_MAX_AMOUNT_CENTS / 100
-                  ).toFixed(0)}.`}
-            </p>
-          </div>
+      <div className="stack" style={{ gap: 12 }}>
+        <div>
           <label className="stack" style={{ gap: 6 }}>
-            <span>
-              Amount (USD) — min ${(WORKSPACE_CREDIT_MIN_AMOUNT_CENTS / 100).toFixed(0)}, max $
-              {(WORKSPACE_CREDIT_MAX_AMOUNT_CENTS / 100).toFixed(0)}
-            </span>
+            <span>Amount (USD)</span>
             <input
               type="number"
-              inputMode="decimal"
               min={WORKSPACE_CREDIT_MIN_AMOUNT_CENTS / 100}
               max={WORKSPACE_CREDIT_MAX_AMOUNT_CENTS / 100}
               step="1"
               value={amountUsd}
-              onChange={(event) => setAmountUsd(event.target.value)}
-              disabled={busy}
+              onChange={(e) => setAmountUsd(e.target.value)}
+              disabled={busy || hostedBusy}
             />
           </label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          <p className="muted" style={{ fontSize: 13 }}>
+            ${WORKSPACE_CREDIT_MIN_AMOUNT_CENTS / 100}–${WORKSPACE_CREDIT_MAX_AMOUNT_CENTS / 100}.{' '}
+            {WORKSPACE_CREDITS_PER_USD} credits per $1.
+            {previewCredits != null
+              ? ` ≈ ${previewCredits.toLocaleString()} credits.`
+              : ''}
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {WORKSPACE_CREDIT_AMOUNT_PRESETS_USD.map((preset) => (
               <button
                 key={preset}
                 type="button"
                 className="button secondary"
-                disabled={busy}
+                disabled={busy || hostedBusy}
                 onClick={() => setAmountUsd(String(preset))}
               >
                 ${preset}
               </button>
             ))}
           </div>
-          <p className="muted" style={{ margin: 0 }}>
-            {previewCredits != null
-              ? `You will receive ${previewCredits.toLocaleString()} credits ($1 = ${WORKSPACE_CREDITS_PER_USD} credits).`
-              : `Enter an amount between $${(WORKSPACE_CREDIT_MIN_AMOUNT_CENTS / 100).toFixed(0)} and $${(
-                  WORKSPACE_CREDIT_MAX_AMOUNT_CENTS / 100
-                ).toFixed(0)}.`}
-          </p>
         </div>
-      ) : null}
+      </div>
+
       {error ? (
         <p role="alert" className="notice error">
           {error}
         </p>
       ) : null}
-      {mode === 'credits' ? (
-        <>
-          <button
-            className="button"
-            type="button"
-            disabled={hostedBusy || busy || previewCredits == null}
-            onClick={() => void startHostedCredits()}
-          >
-            {hostedBusy
-              ? 'Redirecting…'
-              : previewCredits != null
-                ? `Pay securely · ${formatWorkspaceCreditUsd(parsedAmountCents!)} / ${previewCredits.toLocaleString()} credits`
-                : 'Enter a valid amount'}
-          </button>
-          <button
-            className="button secondary"
-            type="button"
-            disabled={busy || hostedBusy || previewCredits == null}
-            onClick={() => void startCredits()}
-          >
-            {busy ? 'Preparing…' : 'Pay on this page'}
-          </button>
-        </>
-      ) : (
-        <button
-          className="button"
-          type="button"
-          disabled={busy}
-          onClick={() => void startCard()}
-        >
-          {busy ? 'Preparing secure checkout…' : 'Continue to secure card setup'}
-        </button>
-      )}
+
+      <p className="muted" style={{ lineHeight: 1.5 }}>
+        Pay the credit amount directly. No temporary $1/$2 hold. After a successful payment, that card
+        is kept on your Workspace billing account for optional auto top-up.
+      </p>
+      <button
+        className="button"
+        type="button"
+        disabled={hostedBusy || busy || previewCredits == null}
+        onClick={() => void startHostedCredits()}
+      >
+        {hostedBusy
+          ? 'Redirecting…'
+          : previewCredits != null
+            ? `Pay securely · ${formatWorkspaceCreditUsd(parsedAmountCents!)} / ${previewCredits.toLocaleString()} credits`
+            : 'Enter a valid amount'}
+      </button>
+      <button
+        className="button secondary"
+        type="button"
+        disabled={busy || hostedBusy || previewCredits == null}
+        onClick={() => void startCredits()}
+      >
+        {busy ? 'Preparing…' : 'Pay on this page'}
+      </button>
       <p>
         <a className="text-link" href={cancelledUrl}>
           Cancel and return to Workspace

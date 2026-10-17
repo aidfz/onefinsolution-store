@@ -7,9 +7,8 @@ import { useRouter } from 'next/navigation';
 import { ArrowUp, ChevronLeft, ChevronRight, CreditCard, FileText, History, LayoutGrid, Plus, Settings, Wallet, UserRound, X } from 'lucide-react';
 import {
   getWorkspaceBillingData,
-  saveWorkspaceCard,
   setWorkspaceAutoReloadSettings,
-  workspaceCreditPurchaseStatus,
+  workspaceCreditPurchaseStatus
 } from '@/app/workspace-actions';
 import { ConversationTools, exportConversation } from './conversation-tools';
 import { MessageContent } from './message-content';
@@ -134,21 +133,7 @@ export function WorkspaceApplication({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const purchaseId = params.get('purchase');
-    const setupIntentId = params.get('setup_intent');
     const billing = params.get('billing');
-    let active = true;
-
-    if (paymentConfirmed || billing === 'success') {
-      setNotice('Your Workspace credit purchase is complete.');
-      void refreshData();
-    } else if (billing === 'card_saved') {
-      setNotice('Workspace payment method saved.');
-      void refreshData();
-    } else if (billing === 'cancelled') {
-      setNotice('Checkout was cancelled. Your Workspace credits were not changed.');
-    } else if (billing === 'failed') {
-      setError('Payment did not complete. No credits were added.');
-    }
 
     if (purchaseId) {
       void workspaceCreditPurchaseStatus(purchaseId)
@@ -157,35 +142,29 @@ export function WorkspaceApplication({
           if (result?.error) setError(result.error);
           else {
             setError('');
-            setNotice(result?.status === 'succeeded' ? 'Your Workspace credit purchase is complete.' : result?.status === 'pending' ? 'Payment is still processing. Credits will appear after confirmation.' : 'Credit purchase did not complete.');
+            setNotice(
+              result?.status === 'succeeded'
+                ? 'Your Workspace credit purchase is complete.'
+                : result?.status === 'pending'
+                  ? 'Payment is still processing. Credits will appear after confirmation.'
+                  : 'Credit purchase did not complete.',
+            );
             void refreshData();
           }
         })
         .catch((failure: unknown) => {
-          if (active) setError(failure instanceof Error ? failure.message : 'Unable to confirm the credit purchase.');
-        });
-    }
-
-    if (setupIntentId) {
-      setNotice('Verifying your Workspace payment method…');
-      void saveWorkspaceCard(setupIntentId)
-        .then((result) => {
-          if (!active) return;
-          if (result.error) setError(result.error);
-          else {
-            setError('');
-            setNotice('Workspace payment method saved.');
-            void refreshData();
+          if (active) {
+            setError(
+              failure instanceof Error
+                ? failure.message
+                : 'Unable to confirm the credit purchase.',
+            );
           }
-        })
-        .catch((failure: unknown) => {
-          if (active) setError(failure instanceof Error ? failure.message : 'Unable to verify the saved payment method.');
         });
     }
 
-    if (purchaseId || setupIntentId || billing) {
+    if (purchaseId || billing) {
       const next = new URLSearchParams(params);
-      // Keep task id if present; drop payment return params after handling.
       next.delete('purchase');
       next.delete('setup_intent');
       next.delete('setup_intent_client_secret');
@@ -197,7 +176,9 @@ export function WorkspaceApplication({
       router.replace(query ? `/workspace?${query}` : '/workspace', { scroll: false });
     }
 
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [paymentConfirmed, refreshData, router]);
 
   useEffect(() => {

@@ -29,7 +29,7 @@ export default async function SubscribePage({
           : `${priceLabel(plan)} starts after your card is verified.`}
       </p>
       <p className="muted">Signed in as {user.email}</p>
-      <SubscriptionForm planKey={plan.key} mode={mode} publishableKey={publishableKey} resumeSetup={params.setup} />
+      <SubscriptionForm planKey={plan.key} mode={mode} publishableKey={publishableKey} />
       <p>
         <Link className="text-link" href="/pricing?billing=cancelled">
           Cancel and return to pricing

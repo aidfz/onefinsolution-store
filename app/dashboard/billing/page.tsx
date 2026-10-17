@@ -119,7 +119,7 @@ export default async function Billing({
       <section className="panel stack section-space">
         <div>
           <h2>Payment methods</h2>
-          <p className="muted">Add, update, remove, or set a default card for homepage chat billing.</p>
+          <p className="muted">Cards are saved after a successful subscription payment. Manage defaults and removals below — there is no separate card-setup step.</p>
         </div>
         <PaymentMethodsPanel />
       </section>

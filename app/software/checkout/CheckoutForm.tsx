@@ -4,122 +4,127 @@ import { useMemo, useState, useTransition } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import {
-  confirmSoftwarePaymentWithSavedMethod,
   createSoftwarePaymentIntent,
-  listSoftwarePaymentMethods,
-  softwarePurchaseStatus,
+  confirmSoftwarePaymentWithSavedMethod,
   startSoftwareHostedCheckout,
-} from './actions';
+} from '@/app/software/checkout/actions';
+
+type SavedMethod = { id: string; brand: string; last4: string; isDefault?: boolean };
 
 function PaymentForm({
   purchaseId,
   clientSecret,
   savedMethods,
-  onCancel,
 }: {
   purchaseId: string;
   clientSecret: string;
-  savedMethods: Array<{
-    id: string;
-    brand: string;
-    last4: string;
-    expMonth?: number;
-    expYear?: number;
-    isDefault?: boolean;
-  }>;
-  onCancel: () => void;
+  savedMethods: SavedMethod[];
 }) {
   const stripe = useStripe();
   const elements = useElements();
-  const defaultId = savedMethods.find((m) => m.isDefault)?.id || savedMethods[0]?.id || '';
-  const [mode, setMode] = useState<'saved' | 'new'>(savedMethods.length ? 'saved' : 'new');
-  const [selectedId, setSelectedId] = useState(defaultId);
   const [error, setError] = useState('');
-  const [busy, startTransition] = useTransition();
+  const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<'new' | 'saved'>(savedMethods.length ? 'saved' : 'new');
+  const defaultId = savedMethods.find((m) => m.isDefault)?.id || savedMethods[0]?.id || '';
+  const [selectedId, setSelectedId] = useState(defaultId);
 
-  function submit(event: React.FormEvent<HTMLFormElement>) {
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!stripe) return;
+    if (!stripe || !elements) return;
+    setBusy(true);
     setError('');
-    startTransition(async () => {
-      try {
-        if (mode === 'saved' && selectedId) {
-          const confirmed = await confirmSoftwarePaymentWithSavedMethod({
-            clientSecret,
-            paymentMethodId: selectedId,
-            purchaseId,
-          });
-          if (confirmed.error === 'additional_action_required' && confirmed.clientSecret) {
-            const next = await stripe.handleNextAction({ clientSecret: confirmed.clientSecret });
-            if (next.error) throw new Error(next.error.message || 'Authentication failed.');
-          } else if (confirmed.error) {
-            throw new Error(confirmed.error);
-          }
-          const verified = await softwarePurchaseStatus(purchaseId);
-          if (verified.error) throw new Error(verified.error);
-          window.location.assign(`/software/checkout/complete?purchase_id=${encodeURIComponent(purchaseId)}`);
-          return;
-        }
-
-        if (!elements) throw new Error('Payment form is still loading.');
-        const { error: submitError } = await elements.submit();
-        if (submitError) throw new Error(submitError.message || 'Check your payment details.');
-        const result = await stripe.confirmPayment({
-          elements,
-          confirmParams: {
-            return_url: `${window.location.origin}/software/checkout/complete?purchase_id=${encodeURIComponent(purchaseId)}`,
-          },
-          redirect: 'if_required',
+    try {
+      if (mode === 'saved' && selectedId) {
+        const result = await confirmSoftwarePaymentWithSavedMethod({
+          purchaseId,
+          paymentMethodId: selectedId,
         });
-        if (result.error) throw new Error(result.error.message || 'Payment could not be completed.');
-        if (result.paymentIntent?.status === 'succeeded' || result.paymentIntent?.status === 'processing') {
-          const verified = await softwarePurchaseStatus(purchaseId);
-          if (verified.error) throw new Error(verified.error);
-          window.location.assign(`/software/checkout/complete?purchase_id=${encodeURIComponent(purchaseId)}`);
+        if (result.error) {
+          setError(result.error);
+          setBusy(false);
           return;
         }
-        throw new Error('Payment has not been confirmed. Please try again.');
-      } catch (failure) {
-        setError(failure instanceof Error ? failure.message : 'Unable to complete this payment.');
+        if (result.clientSecret && result.requiresAction) {
+          const conf = await stripe.confirmCardPayment(result.clientSecret);
+          if (conf.error) {
+            setError(conf.error.message || 'Authentication failed.');
+            setBusy(false);
+            return;
+          }
+        }
+        window.location.assign(`/software/checkout/complete?purchase_id=${encodeURIComponent(purchaseId)}`);
+        return;
       }
-    });
+
+      const result = await stripe.confirmPayment({
+        elements,
+        confirmParams: {
+          return_url: `${window.location.origin}/software/checkout/complete?purchase_id=${encodeURIComponent(purchaseId)}`,
+        },
+        redirect: 'if_required',
+      });
+      if (result.error) {
+        setError(result.error.message || 'Payment failed.');
+        setBusy(false);
+        return;
+      }
+      window.location.assign(`/software/checkout/complete?purchase_id=${encodeURIComponent(purchaseId)}`);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Payment failed.');
+      setBusy(false);
+    }
   }
 
   return (
-    <form className="software-checkout-form" onSubmit={submit}>
+    <form className="stack" onSubmit={(e) => void submit(e)}>
       {savedMethods.length > 0 ? (
-        <div style={{ display: 'grid', gap: 10, marginBottom: 12 }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button type="button" className={mode === 'saved' ? undefined : 'software-checkout-cancel'} disabled={busy} onClick={() => setMode('saved')}>
-              Use saved card
-            </button>
-            <button type="button" className={mode === 'new' ? undefined : 'software-checkout-cancel'} disabled={busy} onClick={() => setMode('new')}>
-              Use a new card
-            </button>
-          </div>
+        <div className="stack" style={{ gap: 8 }}>
+          <label>
+            <input
+              type="radio"
+              name="sw-pay-mode"
+              checked={mode === 'saved'}
+              onChange={() => setMode('saved')}
+              disabled={busy}
+            />{' '}
+            Use a saved Software card
+          </label>
           {mode === 'saved' ? (
-            <label>
-              Software payment method
-              <select value={selectedId || defaultId} disabled={busy} onChange={(e) => setSelectedId(e.target.value)}>
-                {savedMethods.map((card) => (
-                  <option key={card.id} value={card.id}>
-                    {(card.brand || 'card').toUpperCase()} ···· {card.last4}
-                    {card.isDefault ? ' (default)' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <select
+              value={selectedId || defaultId}
+              disabled={busy}
+              onChange={(e) => setSelectedId(e.target.value)}
+            >
+              {savedMethods.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {(m.brand || 'card').toUpperCase()} ···· {m.last4}
+                  {m.isDefault ? ' (default)' : ''}
+                </option>
+              ))}
+            </select>
           ) : null}
+          <label>
+            <input
+              type="radio"
+              name="sw-pay-mode"
+              checked={mode === 'new'}
+              onChange={() => setMode('new')}
+              disabled={busy}
+            />{' '}
+            Pay with a new card
+          </label>
         </div>
       ) : null}
-      {mode === 'new' || savedMethods.length === 0 ? <PaymentElement options={{ layout: 'tabs' }} /> : null}
-      {error && <p className="software-checkout-error" role="alert">{error}</p>}
+      {mode === 'new' ? <PaymentElement options={{ layout: 'tabs' }} /> : null}
+      {error ? (
+        <p className="software-checkout-error" role="alert">
+          {error}
+        </p>
+      ) : null}
       <button type="submit" disabled={busy || !stripe}>
-        {busy ? 'Confirming payment…' : 'Pay securely'}
+        {busy ? 'Confirming payment…' : 'Pay now'}
       </button>
-      <button type="button" className="software-checkout-cancel" disabled={busy} onClick={onCancel}>
-        Change amount or cancel
-      </button>
+      <small>This is the real charge. After it succeeds, the card is kept on your Software account only.</small>
     </form>
   );
 }
@@ -137,24 +142,39 @@ export function CheckoutForm({
 }) {
   const [amount, setAmount] = useState(fullPrice.toFixed(2));
   const [error, setError] = useState('');
-  const [payment, setPayment] = useState<{ clientSecret: string; purchaseId: string; savedMethods: Array<{ id: string; brand: string; last4: string; expMonth?: number; expYear?: number; isDefault?: boolean }> } | null>(null);
-  const [savePaymentMethod, setSavePaymentMethod] = useState(false);
+  const [payment, setPayment] = useState<{
+    clientSecret: string;
+    purchaseId: string;
+    savedMethods: SavedMethod[];
+  } | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isHostedPending, startHostedTransition] = useTransition();
-  const stripePromise = useMemo(() => publishableKey ? loadStripe(publishableKey) : Promise.resolve(null), [publishableKey]);
+  const stripePromise = useMemo(
+    () => (publishableKey ? loadStripe(publishableKey) : Promise.resolve(null)),
+    [publishableKey],
+  );
 
-  function startCheckout(event: React.FormEvent<HTMLFormElement>) {
+  function startOnPageCheckout(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
     const purchaseId = crypto.randomUUID();
     startTransition(async () => {
-      const result = await createSoftwarePaymentIntent({ kind, id, amount, purchaseId, savePaymentMethod });
+      // Real charge only; card is saved via setup_future_usage after success.
+      const result = await createSoftwarePaymentIntent({
+        kind,
+        id,
+        amount,
+        purchaseId,
+        savePaymentMethod: true,
+      });
       if (result.clientSecret) {
         setPayment({
           clientSecret: result.clientSecret,
           purchaseId,
-          savedMethods: Array.isArray((result as { savedMethods?: Array<{ id: string; brand: string; last4: string }> }).savedMethods)
-            ? (result as { savedMethods: Array<{ id: string; brand: string; last4: string }> }).savedMethods
+          savedMethods: Array.isArray(
+            (result as { savedMethods?: SavedMethod[] }).savedMethods,
+          )
+            ? ((result as { savedMethods: SavedMethod[] }).savedMethods || [])
             : [],
         });
         return;
@@ -163,30 +183,51 @@ export function CheckoutForm({
     });
   }
 
-  if (payment) {
+  function startHosted() {
+    setError('');
+    startHostedTransition(async () => {
+      try {
+        const cents = Math.round(Number.parseFloat(amount || '0') * 100);
+        if (!Number.isFinite(cents) || cents < 500) {
+          setError('Enter a valid amount (minimum $5.00).');
+          return;
+        }
+        const result = await startSoftwareHostedCheckout(kind, id, cents);
+        if (result.error || !('url' in result) || !result.url) {
+          setError(result.error || 'Unable to start secure checkout.');
+          return;
+        }
+        window.location.assign(result.url);
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : 'Unable to start secure checkout.');
+      }
+    });
+  }
+
+  if (payment && stripePromise) {
     return (
-      <div className="software-checkout-payment">
-        <p className="software-checkout-secure-note">Secure card entry · Your Software payment profile only</p>
-        <Elements stripe={stripePromise} options={{ clientSecret: payment.clientSecret, appearance: { theme: 'stripe' } }}>
-          <PaymentForm purchaseId={payment.purchaseId} clientSecret={payment.clientSecret} savedMethods={payment.savedMethods || []} onCancel={() => setPayment(null)} />
+      <div className="stack">
+        <Elements
+          stripe={stripePromise}
+          options={{ clientSecret: payment.clientSecret, appearance: { theme: 'stripe' } }}
+        >
+          <PaymentForm
+            purchaseId={payment.purchaseId}
+            clientSecret={payment.clientSecret}
+            savedMethods={payment.savedMethods}
+          />
         </Elements>
       </div>
     );
   }
 
-  if (!publishableKey) {
-    return <p className="software-checkout-error" role="alert">Secure payment is temporarily unavailable. Please contact our team.</p>;
-  }
-
   return (
-    <form className="software-checkout-form" onSubmit={startCheckout}>
-      <label htmlFor="software-payment-amount">Choose your payment amount (USD)</label>
-      <div className="software-checkout-amount">
-        <span aria-hidden="true">$</span>
+    <form className="stack software-checkout-form" onSubmit={startOnPageCheckout}>
+      <label>
+        Amount to pay now (USD)
         <input
-          id="software-payment-amount"
           type="number"
-          min="5"
+          min={5}
           max={fullPrice}
           step="0.01"
           inputMode="decimal"
@@ -195,52 +236,27 @@ export function CheckoutForm({
           onChange={(event) => setAmount(event.target.value)}
           aria-describedby="software-payment-hint"
         />
-        <span>USD</span>
-      </div>
-      <p id="software-payment-hint">Minimum $5.00. Full listed price: ${fullPrice.toFixed(2)} USD.</p>
-      <label className="software-checkout-save-card">
-        <input
-          type="checkbox"
-          checked={savePaymentMethod}
-          onChange={(event) => setSavePaymentMethod(event.target.checked)}
-        />
-        Save this card to my separate Software account for future Software payments.
       </label>
-      {error && <p className="software-checkout-error" role="alert">{error}</p>}
-      <button
-        type="button"
-        disabled={isPending || isHostedPending}
-        onClick={() => {
-          setError('');
-          startHostedTransition(async () => {
-            try {
-              const cents = Math.round(Number.parseFloat(amount || '0') * 100);
-              if (!Number.isFinite(cents) || cents < 500) {
-                setError('Enter a valid amount (minimum $5.00).');
-                return;
-              }
-              const result = await startSoftwareHostedCheckout(
-                kind,
-                id,
-                cents,
-              );
-              if (result.error || !('url' in result) || !result.url) {
-                setError(result.error || 'Unable to start secure checkout.');
-                return;
-              }
-              window.location.assign(result.url);
-            } catch (failure) {
-              setError(failure instanceof Error ? failure.message : 'Unable to start secure checkout.');
-            }
-          });
-        }}
-      >
+      <p id="software-payment-hint">
+        Minimum $5.00. Full listed price: ${fullPrice.toFixed(2)} USD. No separate card-save step and no
+        temporary authorization charge. You pay this amount; after success that card is kept on your
+        Software account for future Software payments only.
+      </p>
+      {error ? (
+        <p className="software-checkout-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <button type="button" disabled={isPending || isHostedPending} onClick={() => void startHosted()}>
         {isHostedPending ? 'Redirecting…' : 'Pay securely'}
       </button>
       <button type="submit" className="software-checkout-cancel" disabled={isPending || isHostedPending}>
         {isPending ? 'Preparing secure payment…' : 'Pay on this page'}
       </button>
-      <small>Hosted Stripe Checkout is preferred. On-page payment still uses your separate Software billing account.</small>
+      <small>
+        Preferred path is Stripe-hosted checkout. Both paths charge the real amount only and save the card after
+        success.
+      </small>
     </form>
   );
 }

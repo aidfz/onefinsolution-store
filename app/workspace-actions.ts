@@ -496,157 +496,22 @@ export async function workspaceCreditPurchaseStatus(purchaseId: string) {
   }
 }
 
+/**
+ * SetupIntent card-save removed. Buy credits to attach a card after a real payment.
+ */
 export async function prepareWorkspaceCardUpdate() {
-  const user = await currentUser();
-  if (!user) return { error: 'Please sign in to manage Workspace payment settings.' } as const;
-  try {
-    await throttle(`workspace-payment-method:${user.id}`, 10);
-    const customer = await workspaceCustomer(user.id, true);
-    if (!customer) throw new Error('Billing account unavailable.');
-    const stripe = await verifiedStripe();
-    const setup = await stripe.setupIntents.create({
-      customer,
-      usage: 'off_session',
-      allowed_payment_method_types: ['card'],
-      metadata: { app: 'chatbot-template', flow: 'workspace-credit-card', user_id: user.id },
-    }, { idempotencyKey: `workspace-card:${user.id}:${randomUUID()}` });
-    if (!setup.client_secret) throw new Error('Card setup is unavailable.');
-    return { clientSecret: setup.client_secret } as const;
-  } catch (error) {
-    console.error('Unable to prepare Workspace card setup:', error);
-    return { error: 'Unable to prepare secure card setup. Please try again.' } as const;
-  }
+  return {
+    error:
+      'Separate card setup was removed. Add credits to pay directly — your card is saved after a successful payment.',
+  } as const;
 }
 
-export async function setWorkspaceAutoReloadSettings(input: {
-  enabled: boolean;
-  threshold?: number;
-  amountUsd?: number | string | null;
-  amountCents?: number | string | null;
-}): Promise<{ ok?: true; error?: string; autoReload?: WorkspaceAutoReloadSettings }> {
-  const user = await currentUser();
-  if (!user) return { error: 'Please sign in to manage Workspace auto-reload.' };
-  if (!input || typeof input.enabled !== 'boolean') {
-    return { error: 'Invalid auto-reload settings.' };
-  }
-
-  const threshold =
-    input.threshold == null || input.threshold === undefined
-      ? 1
-      : Math.floor(Number(input.threshold));
-  if (!Number.isSafeInteger(threshold) || threshold < 0 || threshold > 1_000_000) {
-    return { error: 'Choose a valid auto-reload threshold.' };
-  }
-
-  let reloadAmountCents = workspaceCreditPack.amount;
-  try {
-    if (
-      (input.amountCents != null && String(input.amountCents).trim() !== '') ||
-      (input.amountUsd != null && String(input.amountUsd).trim() !== '')
-    ) {
-      reloadAmountCents = resolveWorkspaceCreditQuote({
-        amountCents: input.amountCents,
-        amountUsd: input.amountUsd,
-        allowDefault: false,
-      }).amountCents;
-    }
-  } catch (error) {
-    return {
-      error: error instanceof Error ? error.message : 'Invalid auto-reload amount.',
-    };
-  }
-
-  try {
-    const [card] = await query<{ payment_method_id: string | null }>(
-      'select payment_method_id from workspace_credit_settings where user_id=$1',
-      [user.id],
-    );
-    if (input.enabled && !card?.payment_method_id) {
-      return { error: 'Save a Workspace card before enabling auto-reload.' };
-    }
-
-    await query(
-      `insert into workspace_credit_settings(
-         user_id, auto_reload_enabled, auto_reload_threshold, reload_amount_cents, updated_at
-       ) values ($1,$2,$3,$4,now())
-       on conflict (user_id) do update set
-         auto_reload_enabled=excluded.auto_reload_enabled,
-         auto_reload_threshold=excluded.auto_reload_threshold,
-         reload_amount_cents=excluded.reload_amount_cents,
-         updated_at=now()`,
-      [user.id, input.enabled, threshold, reloadAmountCents],
-    );
-
-    revalidatePath('/workspace');
-    return {
-      ok: true as const,
-      autoReload: await readWorkspaceAutoReloadSettings(user.id),
-    };
-  } catch (error) {
-    console.error('Unable to update Workspace auto-reload settings:', error);
-    try {
-      await query(
-        `insert into workspace_credit_settings(
-           user_id, auto_reload_enabled, auto_reload_threshold, updated_at
-         ) values ($1,$2,$3,now())
-         on conflict (user_id) do update set
-           auto_reload_enabled=excluded.auto_reload_enabled,
-           auto_reload_threshold=excluded.auto_reload_threshold,
-           updated_at=now()`,
-        [user.id, input.enabled, threshold],
-      );
-      revalidatePath('/workspace');
-      return {
-        ok: true as const,
-        autoReload: await readWorkspaceAutoReloadSettings(user.id),
-      };
-    } catch {
-      return {
-        error:
-          error instanceof Error && /auto_reload|reload_amount/i.test(error.message)
-            ? 'Auto-reload is not available until database migrations 015/016 are applied.'
-            : 'Unable to update auto-reload settings. Please try again.',
-      };
-    }
-  }
+/** @deprecated SetupIntent card save removed. */
+/** @deprecated SetupIntent card save removed — buy credits instead. */
+export async function saveWorkspaceCard(_setupIntentId: string) {
+  return {
+    error:
+      'Separate card setup was removed. Add credits at /checkout/credits — the card is saved after a successful payment.',
+  } as const;
 }
 
-
-export async function saveWorkspaceCard(setupIntentId: string) {
-  const user = await currentUser();
-  if (!user) return { error: 'Please sign in to manage Workspace payment settings.' } as const;
-  if (!/^seti_[a-zA-Z0-9]+$/.test(setupIntentId)) return { error: 'Invalid card setup reference.' } as const;
-  try {
-    const customer = await workspaceCustomer(user.id);
-    const stripe = await verifiedStripe();
-    if (!customer) throw new Error('Card verification failed.');
-    const setup = await stripe.setupIntents.retrieve(setupIntentId, { expand: ['payment_method'] });
-    assertSetupIntentOwnedByCustomer(setup, customer);
-    const metadata = setup.metadata || {};
-    if (
-      metadata.app !== 'chatbot-template' ||
-      metadata.flow !== 'workspace-credit-card' ||
-      metadata.user_id !== user.id
-    ) {
-      throw new Error('Card verification failed.');
-    }
-    const methodId = stripePaymentMethodId(setup.payment_method);
-    if (!methodId) throw new Error('Card verification failed.');
-    const method = await requireOwnedPaymentMethod(stripe, customer, methodId);
-    if (method.type !== 'card' || !method.card) throw new Error('Card verification failed.');
-    await query(
-      `insert into workspace_credit_settings(user_id,payment_method_id,card_brand,card_last4,card_exp_month,card_exp_year,updated_at)
-       values($1,$2,$3,$4,$5,$6,now())
-       on conflict(user_id) do update set payment_method_id=excluded.payment_method_id,card_brand=excluded.card_brand,
-         card_last4=excluded.card_last4,card_exp_month=excluded.card_exp_month,card_exp_year=excluded.card_exp_year,updated_at=now()`,
-      [user.id, method.id, method.card.brand, method.card.last4, method.card.exp_month, method.card.exp_year],
-    );
-    await stripe.customers.update(customer, { invoice_settings: { default_payment_method: method.id } });
-    revalidatePath('/workspace');
-    revalidatePath('/account');
-    return { success: true } as const;
-  } catch (error) {
-    console.error('Unable to save Workspace card:', error);
-    return { error: 'Unable to verify and save this card. Please try again.' } as const;
-  }
-}

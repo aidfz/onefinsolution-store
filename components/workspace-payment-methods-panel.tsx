@@ -1,134 +1,126 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   listWorkspacePaymentMethods,
   removeWorkspacePaymentMethod,
-  saveWorkspaceCard,
-  setWorkspaceDefaultPaymentMethod,
 } from '@/app/workspace-actions';
-import type { WorkspaceSavedPaymentMethod } from '@/app/workspace-actions';
-import { WorkspaceCreditCheckout } from '@/components/workspace-credit-checkout';
 
-export function WorkspacePaymentMethodsPanel({ publishableKey }: { publishableKey: string }) {
+type Method = {
+  id: string;
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+  isDefault: boolean;
+};
+
+/**
+ * Workspace cards — list / remove only.
+ * Adding a card happens by buying credits (real payment), not SetupIntent.
+ */
+export function WorkspacePaymentMethodsPanel() {
   const router = useRouter();
-  const [methods, setMethods] = useState<WorkspaceSavedPaymentMethod[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState('');
+  const [methods, setMethods] = useState<Method[]>([]);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const refreshMethods = useCallback(async () => {
-    const result = await listWorkspacePaymentMethods();
-    if ('error' in result) {
-      setError(result.error || '');
-      setMethods([]);
-    } else {
-      setError('');
-      setMethods(result.methods);
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    const load = async () => {
-      const result = await listWorkspacePaymentMethods();
-      if (!active) return;
-      if ('error' in result) {
-        setError(result.error || '');
-        setMethods([]);
-      } else setMethods(result.methods);
-      setLoading(false);
-    };
-    void load();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const setupIntent = new URLSearchParams(window.location.search).get('setup_intent');
-    if (!setupIntent) return;
-    let active = true;
-    setBusyId(setupIntent);
-    setMessage('Verifying your Workspace payment method…');
-    void saveWorkspaceCard(setupIntent)
-      .then(async (result) => {
-        if (!active) return;
-        if (result.error) setError(result.error);
-        else {
-          setError('');
-          setMessage('Workspace payment method saved.');
-          await refreshMethods();
-        }
-        router.replace('/account', { scroll: false });
-      })
-      .catch((failure: unknown) => {
-        if (active) setError(failure instanceof Error ? failure.message : 'Unable to verify the saved payment method.');
-      })
-      .finally(() => {
-        if (active) setBusyId('');
-      });
-    return () => {
-      active = false;
-    };
-  }, [refreshMethods, router]);
-
-  async function updateMethod(method: WorkspaceSavedPaymentMethod, action: 'default' | 'remove') {
-    setBusyId(method.id);
+  const refresh = useCallback(async () => {
+    setLoading(true);
     setError('');
-    setMessage('');
     try {
-      const result = action === 'default'
-        ? await setWorkspaceDefaultPaymentMethod(method.id)
-        : await removeWorkspacePaymentMethod(method.id);
-      if (result.error) setError(result.error || '');
-      else {
-        setMessage(result.message || '');
-        await refreshMethods();
+      const result = await listWorkspacePaymentMethods();
+      if (result.error) {
+        setError(result.error);
+        setMethods([]);
+        return;
       }
+      setMethods((result.methods || []) as Method[]);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Unable to update Workspace payment methods.');
+      setError(failure instanceof Error ? failure.message : 'Unable to load Workspace cards.');
+      setMethods([]);
     } finally {
-      setBusyId('');
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  async function onRemove(id: string) {
+    if (!window.confirm('Remove this card from your Workspace account?')) return;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await removeWorkspacePaymentMethod(id);
+      if (result.error) throw new Error(result.error);
+      setNotice(result.message || 'Card removed.');
+      await refresh();
+      router.refresh();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Unable to remove card.');
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
     <div className="stack">
-      <p className="muted">Workspace-only cards are kept separate from homepage subscription payment methods.</p>
-      {error ? <p className="notice error" role="alert">{error}</p> : null}
-      {message ? <p className="notice" role="status">{message}</p> : null}
-      {loading ? <p className="muted">Loading Workspace payment methods…</p> : null}
-      {!loading && !methods.length && !error ? <p className="muted">No saved Workspace cards yet.</p> : null}
-      {methods.map((method) => (
-        <div key={method.id} className="setting-row">
-          <div>
-            <strong>{method.brand} ···· {method.last4}</strong>
-            <p className="muted text-sm">
-              {method.expMonth && method.expYear ? `Expires ${String(method.expMonth).padStart(2, '0')}/${method.expYear}` : 'Saved card'}
-              {method.isDefault ? ' · Default for Workspace' : ''}
-            </p>
-          </div>
-          <div className="button-row">
-            {!method.isDefault ? (
-              <button className="button secondary" type="button" disabled={Boolean(busyId)} onClick={() => void updateMethod(method, 'default')}>
-                Set default
-              </button>
-            ) : null}
-            <button className="button secondary" type="button" disabled={Boolean(busyId)} onClick={() => void updateMethod(method, 'remove')}>
-              Remove
-            </button>
-          </div>
-        </div>
-      ))}
-      {publishableKey ? (
-        <WorkspaceCreditCheckout mode="card" publishableKey={publishableKey} returnPath="/account" />
+      <h3>Workspace payment methods</h3>
+      <p className="muted text-sm" style={{ lineHeight: 1.5 }}>
+        Add credits to save a card — there is no separate card-setup session. Cards saved after a
+        successful credit purchase can be reused for auto top-up.
+      </p>
+      {loading ? <p className="muted">Loading…</p> : null}
+      {error ? (
+        <p className="notice error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {notice ? <p className="notice success">{notice}</p> : null}
+      {!loading && methods.length === 0 ? (
+        <p className="muted">No Workspace cards on file yet.</p>
       ) : (
-        <p className="notice error">Stripe publishable key is not configured.</p>
+        <ul className="stack" style={{ listStyle: 'none', padding: 0, gap: 10 }}>
+          {methods.map((m) => (
+            <li
+              key={m.id}
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 8,
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <span>
+                {(m.brand || 'card').toUpperCase()} ···· {m.last4}
+                {` · exp ${String(m.expMonth).padStart(2, '0')}/${m.expYear}`}
+                {m.isDefault ? ' · default' : ''}
+              </span>
+              <button
+                type="button"
+                className="button secondary"
+                disabled={busy}
+                onClick={() => void onRemove(m.id)}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
+      <p>
+        <Link className="button" href="/checkout/credits">
+          Add credits (saves card after payment)
+        </Link>
+      </p>
     </div>
   );
 }

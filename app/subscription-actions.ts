@@ -1,22 +1,13 @@
 'use server';
+
 import { currentUser } from '@/lib/session';
-import { prepareEnrollment,completeEnrollment } from '@/lib/subscription-enrollment';
 import { createSubscriptionHostedCheckout } from '@/lib/hosted-checkout';
 import { throttle } from '@/lib/auth-service';
-import { revalidatePath } from 'next/cache';
-export async function prepareSubscription(key:string,mode:'trial'|'paid') {
-  const user=await currentUser();if(!user)throw new Error('Please sign in first.');
-  if(!['trial','paid'].includes(mode))throw new Error('Choose trial or subscription.');
-  await throttle(`setup:${user.id}`,20);
-  try{return {data:await prepareEnrollment(user.id,key,mode)};}catch(error){return {error:error instanceof Error?error.message:'Unable to prepare card setup.'};}
-}
-export async function finishSubscription(setupId:string,consent:boolean) {
-  const user=await currentUser();if(!user)throw new Error('Please sign in first.');
-  await throttle(`subscribe:${user.id}`,20);
-  try{const data=await completeEnrollment(user.id,setupId,consent);revalidatePath('/dashboard');return {data};}catch(error){return {error:error instanceof Error?error.message:'Unable to finish subscription.'};}
-}
 
-/** Stripe-hosted Checkout on pay.onefinsolution.store (returns apex URL after pay). */
+/**
+ * Direct subscription payment only (Stripe Hosted Checkout).
+ * No SetupIntent, no card-save-before-pay, no separate enrollment setup session.
+ */
 export async function startHostedSubscriptionCheckout(
   planKey: string,
   mode: 'trial' | 'paid',
@@ -38,4 +29,20 @@ export async function startHostedSubscriptionCheckout(
           : 'Unable to start secure checkout.',
     } as const;
   }
+}
+
+/** @deprecated Use startHostedSubscriptionCheckout — SetupIntent enrollment removed. */
+export async function prepareSubscription(_key: string, _mode: 'trial' | 'paid') {
+  return {
+    error:
+      'Card setup before payment was removed. Use Continue to secure checkout to pay for your plan directly.',
+  } as const;
+}
+
+/** @deprecated Use startHostedSubscriptionCheckout — SetupIntent enrollment removed. */
+export async function finishSubscription(_setupId: string, _consent: boolean) {
+  return {
+    error:
+      'Card setup before payment was removed. Start checkout from pricing to subscribe directly.',
+  } as const;
 }

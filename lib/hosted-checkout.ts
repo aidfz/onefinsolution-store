@@ -84,6 +84,8 @@ export async function createSubscriptionHostedCheckout(input: {
     ),
     client_reference_id: user.id,
     metadata: meta,
+    // Card is collected during the real subscription/trial Checkout — no prior SetupIntent.
+    payment_method_collection: 'always',
     subscription_data: {
       metadata: meta,
       ...(trialDays ? { trial_period_days: trialDays } : {}),
