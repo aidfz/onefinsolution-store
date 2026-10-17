@@ -93,3 +93,12 @@ rw_vars_tmp.txt
 _archive/
 *secrets*.env
 .railway-token
+.env.stripe-live-generated
+stripe-sec-keys.txt
+.tmp_live_stripe_summary.json
+.tmp_live_software_catalog.json
+.tmp_provision_live_catalog.py
+.tmp_railway_env
+.tmp_railway_ids
+
+.env.production.local
