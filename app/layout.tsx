@@ -6,6 +6,8 @@ import { ClientLayout } from "./client";
 import { Suspense } from 'react';
 import { Toaster } from 'sonner';
 import { company } from '@/lib/company';
+import { IntercomMessenger } from '@/components/intercom-messenger';
+import { currentUser } from '@/lib/session';
 
 const inter = Inter({ subsets: ["latin"] });
 // Authenticated pages read cookies; do not prerender against external services at build time.
@@ -44,14 +46,27 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const user = await currentUser();
+  const intercomUser = user
+    ? {
+        user_id: user.id,
+        email: user.email,
+        name: user.name || undefined,
+        created_at: user.created_at
+          ? Math.floor(new Date(user.created_at).getTime() / 1000)
+          : undefined,
+      }
+    : null;
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
+        <IntercomMessenger user={intercomUser} />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
