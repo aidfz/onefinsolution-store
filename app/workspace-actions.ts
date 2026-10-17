@@ -18,8 +18,8 @@ import { fulfillStripeEvent } from '@/lib/stripe-fulfillment';
 import { throttle } from '@/lib/auth-service';
 import { revalidatePath } from 'next/cache';
 import { expectedStripeLivemode, stripeObjectMatchesMode } from '@/lib/billing-environment';
-import {
 import { createWorkspaceCreditsHostedCheckout } from '@/lib/hosted-checkout';
+import {
   assertCustomerMatchesScope,
   assertSetupIntentOwnedByCustomer,
   requireOwnedPaymentMethod,
