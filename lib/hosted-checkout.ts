@@ -11,7 +11,7 @@ import { verifiedStripe } from '@/lib/stripe';
 import { currentCustomer } from '@/lib/stripe-billing';
 import { approvedPrice } from '@/lib/subscription-catalog';
 import { sitePath } from '@/lib/site-url';
-import { resolveWorkspaceCreditPack } from '@/lib/workspace-credit-pack';
+import { resolveWorkspaceCreditQuote } from '@/lib/workspace-credit-pack';
 import { workspaceCustomer } from '@/lib/workspace-stripe';
 
 const APP = 'chatbot-template';
@@ -104,7 +104,7 @@ export async function createWorkspaceCreditsHostedCheckout(input: {
   const user = await currentUser();
   if (!user) throw new Error('Please sign in.');
 
-  const pack = resolveWorkspaceCreditPack(input.amountUsd);
+  const pack = resolveWorkspaceCreditQuote({ amountUsd: input.amountUsd });
   const stripe = await verifiedStripe();
   const customerId = await workspaceCustomer(user.id, true);
   if (!customerId) throw new Error('Unable to create workspace billing customer.');
